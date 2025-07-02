@@ -1,287 +1,223 @@
-import pygame
-import json
-pygame.init()
+from flask import Flask, render_template, request, redirect, url_for, g
+import sqlite3
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
-width = 800
-height = 800
+app = Flask(__name__)
+app.config["SECRET_KEY"] = 'your_secret_key'
 
-clock = pygame.time.Clock()
-fps = 60
-tile_size = 40
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
 
-game_over = 0
-score = 0
-lives = 3
-
-display = pygame.display.set_mode((width, height))
-pygame.display.set_caption('Platformer')
-
-player_image = pygame.image.load('img/player1.png')
-player_rect = player_image.get_rect()
-
-bg_image = pygame.image.load('img/bg5.png')
-bg_rect = bg_image.get_rect()
-
-sound_jump = pygame.mixer.Sound('music/jump (2).wav')
-sound_game_over = pygame.mixer.Sound('music/game_over.wav')
-
-with open('levels/level1.json', 'r') as file:
-    world_data = json.load(file)
-
-level = 1
-max_level = 3
-
-def reset_level():
-    player.rect.x = 100
-    player.rect.y = height - 130
-    lava_group.empty()
-    exit_group.empty()
-    with open(f'levels/level{level}.json', 'r') as file:
-        world_data = json.load(file)
-    world = World(world_data)
-    return world
-
-def draw_text(text, color, size, x, y):
-    font = pygame.font.SysFont('Arial', size)
-    img = font.render(text, True, color)
-    display.blit(img, (x, y))
-
-class Player():
-    def __init__(self):
-        self.images_right = []
-        self.images_left = []
-        self.index = 0
-        self.counter = 0
-        for num in range(1, 3):
-            img_right = pygame.image.load(f'img/player{num}.png')
-            img_right = pygame.transform.scale(img_right, (35, 60))
-            img_left = pygame.transform.flip(img_right, True, False)
-            self.images_right.append(img_right)
-            self.images_left.append(img_left)
-        self.image = self.images_right[self.index]
-        self.rect = self.image.get_rect()
-        self.rect.x = 100
-        self.rect.y = height - 40 - 60
-        self.gravity = 0
-        self.jumped = False
-        self.direction = 0
-        self.width = self.image.get_width()
-        self.height = self.image.get_height()
-        self.dead_image = pygame.image.load('img/ghost.png')
-
-    def update(self):
-        global game_over
-        x = 0
-        y = 0
-        walk_speed = 10 # раз в 10 повторений будет анимация
-
-        if game_over == 0:
-            key = pygame.key.get_pressed()
-            if key[pygame.K_SPACE] and self.jumped == False:
-                self.gravity = -15
-                self.jumped = True
-                sound_jump.play()
-
-            if key[pygame.K_LEFT]:
-                x -= 5
-                self.direction = -1
-                self.counter += 1
-            if key[pygame.K_RIGHT]:
-                x += 5
-                self.direction = 1
-                self.counter += 1
-
-            if self.counter > walk_speed:
-                self.counter = 0
-                self.index += 1
-                if self.index >= len(self.images_right):
-                    self.index = 0
-                if self.direction == 1:
-                    self.image = self.images_right[self.index]
-                else:
-                    self.image = self.images_left[self.index]
-
-            self.gravity += 1
-            if self.gravity > 10:
-                self.gravity = 10
-            y += self.gravity
-
-            for tile in world.tile_list:
-                if tile[1].colliderect(self.rect.x + x, self.rect.y, self.width, self.height):
-                    x = 0
-                if tile[1].colliderect(self.rect.x, self.rect.y + y, self.width, self.height):
-                    if self.gravity < 0:
-                        y = tile[1].bottom - self.rect.top
-                        self.gravity = 0
-                    elif self.gravity >= 0:
-                        y = tile[1].top - self.rect.bottom
-                        self.gravity = 0
-                        self.jumped = False
-
-            self.rect.x += x
-            self.rect.y += y
-
-            if self.rect.bottom > height:
-                self.rect.bottom = height
-
-            if pygame.sprite.spritecollide(self, lava_group, False):
-                game_over = -1
-
-            if pygame.sprite.spritecollide(self, exit_group, False):
-                game_over = 1
-
-        elif game_over == -1:
-            sound_game_over.play()
-            self.image = self.dead_image
-            if self.rect.y > 0:
-                self.rect.y -= 5
-
-        display.blit(self.image, self.rect)
+DATABASE = "sqlite.db"
 
 
-class World():
-    def __init__(self, data):
-        self.tile_list = []
-        dirt_img = pygame.image.load('img/dirt.png')
-        grass_img = pygame.image.load('img/grass.png')
-        row_count = 0
-        for row in data:
-            col_count = 0
-            for tile in row:
-                if tile == 1 or tile == 2:
-                    images = {
-                        1: dirt_img,
-                        2: grass_img
-                    }
-                    img = pygame.transform.scale(images[tile], (tile_size, tile_size))
-                    img_rect = img.get_rect()
-                    img_rect.x = col_count * tile_size
-                    img_rect.y = row_count * tile_size
-                    tile = (img, img_rect)
-                    self.tile_list.append(tile)
-                elif tile == 3:
-                    lava = Lava(col_count * tile_size, row_count * tile_size + (tile_size // 2))
-                    lava_group.add(lava)
-                elif tile == 5:
-                    exit = Exit(col_count * tile_size, row_count * tile_size - (tile_size // 2))
-                    exit_group.add(exit)
-                if tile == 6:
-                    coin = Coin(col_count * tile_size + (tile_size // 2), row_count * tile_size + (tile_size // 2))
-                    coin_group.add(coin)
-                col_count += 1
-            row_count += 1
-
-    def draw(self):
-        for tile in self.tile_list:
-            display.blit(tile[0], tile[1])
+def get_db():
+    if 'db' not in g:
+        g.db = sqlite3.connect(DATABASE)
+    return g.db
 
 
-class Lava(pygame.sprite.Sprite):
-    def __init__(self, x, y):
-        pygame.sprite.Sprite.__init__(self)
-        img = pygame.image.load('img/lava.png')
-        self.image = pygame.transform.scale(img, (tile_size, tile_size // 2))
-        self.rect = self.image.get_rect()
-        self.rect.x = x
-        self.rect.y = y
+@app.teardown_appcontext
+def close_db(exception):
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
 
 
-class Exit(pygame.sprite.Sprite):
-    def __init__(self, x, y):
-        pygame.sprite.Sprite.__init__(self)
-        img = pygame.image.load('img/exit.png')
-        self.image = pygame.transform.scale(img, (tile_size, int(tile_size * 1.5)))
-        self.rect = self.image.get_rect()
-        self.rect.x = x
-        self.rect.y = y
+class User(UserMixin):
+    def __init__(self, id, username, password_hash):
+        self.id = id
+        self.username = username
+        self.password_hash = password_hash
 
-class Coin(pygame.sprite.Sprite):
-    def __init__(self, x, y):
-        pygame.sprite.Sprite.__init__(self)
-        img = pygame.image.load('img/coin.png')
-        self.image = pygame.transform.scale(img, (tile_size // 2, tile_size // 2))
-        self.rect = self.image.get_rect()
-        self.rect.center = (x, y)
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
 
-class Button:
-    def __init__(self, x, y, image):
-        self.image = pygame.image.load(image)
-        self.rect = self.image.get_rect(center=(x, y))
-
-    def draw(self):
-        action = False
-        pos = pygame.mouse.get_pos()
-        if self.rect.collidepoint(pos):
-            if pygame.mouse.get_pressed()[0] == 1:
-                action = True
-        display.blit(self.image, self.rect)
-        return action
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
 
 
-lava_group = pygame.sprite.Group()
-exit_group = pygame.sprite.Group()
-coin_group = pygame.sprite.Group()
+@login_manager.user_loader
+def load_user(user_id):
+    db = get_db()
+    user = db.execute('SELECT * FROM user WHERE id = ?', (user_id,)).fetchone()
+    if user is not None:
+        return User(user[0], user[1], user[2])
+    return None
 
 
-restart_button = Button(width // 2, height // 2 , 'img/restart_btn 5.png')
-start_button = Button(width // 2 - 150, height // 2, 'img/start_btn 5.png')
-exit_button = Button(width // 2 + 150, height // 2, 'img/exit_btn 5.png')
+@app.route("/")
+def index():
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute(''' 
+        SELECT post.id, post.title, post.content, post.author_id, user.username, 
+               COUNT(like.id) AS likes 
+        FROM post 
+        JOIN user ON post.author_id = user.id 
+        LEFT JOIN like ON post.id = like.post_id 
+        GROUP BY post.id 
+    ''')
+    result = cursor.fetchall()
+    posts = []
+    liked_posts = []
+
+    if current_user.is_authenticated:
+        likes_result = db.execute('SELECT post_id FROM like WHERE user_id = ?', (current_user.id,)).fetchall()
+        liked_posts = [like[0] for like in likes_result]
+
+    for post in reversed(result):
+        posts.append({
+            'id': post[0],
+            'title': post[1],
+            'content': post[2],
+            'author_id': post[3],
+            'username': post[4],
+            'likes': post[5],
+            'liked': post[0] in liked_posts
+        })
+
+    return render_template('blog.html', posts=posts)
 
 
-world = World(world_data)
-player = Player()
+@app.route('/add/', methods=['GET', 'POST'])
+@login_required
+def add_post():
+    if request.method == 'POST':
+        title = request.form['title']
+        content = request.form['content']
+        db = get_db()
+        db.execute('INSERT INTO post (title, content, author_id) VALUES (?, ?, ?)',
+                   (title, content, current_user.id))
+        db.commit()
+        return redirect(url_for('index'))
+    return render_template('add_post.html')
 
-run = True
-main_menu = True
 
-while run:
-    clock.tick(fps)
-    display.blit(bg_image, bg_rect)
-    if main_menu:
-        if exit_button.draw():
-            run = False
-        if start_button.draw():
-            main_menu = False
-            level = 1
-            score = 0
-            lives = 3
-            world = reset_level()
-    else:
-        world.draw()
-        lava_group.draw(display)
-        exit_group.draw(display)
-        coin_group.draw(display)
-        draw_text(str(score), (255, 255, 255), 30, 10, 10)
+@app.route('/post/<int:post_id>')
+def post(post_id):
+    db = get_db()
+    result = db.execute(''' 
+        SELECT post.id, post.title, post.content, post.author_id, user.username, 
+               (SELECT COUNT(*) FROM like WHERE like.post_id = post.id) AS likes 
+        FROM post 
+        JOIN user ON post.author_id = user.id 
+        WHERE post.id = ? 
+    ''', (post_id,)).fetchone()
 
-        lava_group.update()
-        player.update()
+    if not result:
+        return 'Пост не найден', 404
 
-        if pygame.sprite.spritecollide(player, coin_group, True):
-            score += 1
+    liked = False
+    if current_user.is_authenticated:
+        liked = user_is_liking(current_user.id, post_id)
 
-        if game_over == -1:
-            if restart_button.draw():
-                lives -= 1
-                if lives == 0:
-                    main_menu = True
-                player = Player()
-                world = reset_level()
-                game_over = 0
+    post_dict = {
+        'id': result[0],
+        'title': result[1],
+        'content': result[2],
+        'author_id': result[3],
+        'username': result[4],
+        'likes': result[5],
+        'liked': liked
+    }
+    return render_template('index.html', post=post_dict)
 
-        if game_over == 1:
-            game_over = 0
-            if level < max_level:
-                level += 1
-                world = reset_level()
-            else:
-                print('win')
-                main_menu = True
 
-    for event in pygame.event.get():
-       if event.type == pygame.QUIT:
-           run = False
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        db = get_db()
+        try:
+            db.execute('INSERT INTO user (username, password_hash) VALUES (?, ?)',
+                       (username, generate_password_hash(password)))
+            db.commit()
+            return redirect(url_for('login'))
+        except sqlite3.IntegrityError:
+            return render_template('register.html', message='Username already exists!')
+    return render_template('register.html')
 
-    pygame.display.update()
 
-pygame.quit()
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        db = get_db()
+        user = db.execute('SELECT * FROM user WHERE username = ?', (username,)).fetchone()
+        if user:
+            user_obj = User(user[0], user[1], user[2])
+            if user_obj.check_password(password):
+                login_user(user_obj)
+                return redirect(url_for('index'))
+        return render_template('login.html', message='Invalid username or password')
+    return render_template('login.html')
 
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('index'))
+
+
+@app.route('/delete/<int:post_id>', methods=['POST'])
+@login_required
+def delete_post(post_id):
+    db = get_db()
+    post = db.execute('SELECT * FROM post WHERE id = ?', (post_id,)).fetchone()
+    if post and post[3] == current_user.id:
+        db.execute('DELETE FROM post WHERE id = ?', (post_id,))
+        db.commit()
+    return redirect(url_for('index'))
+
+
+def user_is_liking(user_id, post_id):
+    db = get_db()
+    like = db.execute('SELECT * FROM like WHERE user_id = ? AND post_id = ?', (user_id, post_id)).fetchone()
+    return bool(like)
+
+
+@app.route('/like/<int:post_id>')
+@login_required
+def like_post(post_id):
+    db = get_db()
+    post = db.execute('SELECT * FROM post WHERE id = ?', (post_id,)).fetchone()
+    if post:
+        if user_is_liking(current_user.id, post_id):
+            db.execute('DELETE FROM like WHERE user_id = ? AND post_id = ?', (current_user.id, post_id))
+            print('You unliked this post.')
+        else:
+            db.execute('INSERT INTO like (user_id, post_id) VALUES (?, ?)', (current_user.id, post_id))
+            print('You liked this post!')
+        db.commit()
+        return redirect(url_for('index'))
+    return 'Post not found', 404
+
+
+@app.route('/edit/<int:post_id>', methods=['GET', 'POST'])
+@login_required
+def edit_post(post_id):
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute('SELECT * FROM post WHERE id = ?', (post_id,))
+    post = cursor.fetchone()
+    if post is None:
+        return "Пост не найден", 404
+    if post[3] != current_user.id:
+        return "Нет доступа", 403
+    if request.method == 'POST':
+        title = request.form['title']
+        content = request.form['content']
+        cursor.execute('UPDATE post SET title = ?, content = ? WHERE id = ?', (title, content, post_id))
+        db.commit()
+        return redirect(url_for('post', post_id=post_id))
+    post_dict = {'id': post[0], 'title': post[1], 'content': post[2]}
+    return render_template('edit_post.html', post=post_dict)
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
